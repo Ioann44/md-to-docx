@@ -1,4 +1,8 @@
+from enum import Enum
+import functools
 import logging
+import os
+from pathlib import Path
 
 import markdown2
 from docx import Document
@@ -16,47 +20,23 @@ logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
 
-def update_style(
-    doc, style_name: str, alignment: WD_ALIGN_PARAGRAPH = WD_ALIGN_PARAGRAPH.JUSTIFY, uppercase=False
-):
-    if style_name.startswith("Header"):
-        style = doc.styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
-        style.base_style = doc.styles[f"Header {style_name[-1]}"]
-
-    style: ParagraphStyle = doc.styles[style_name]
-    font = style.font
-    font.color.rgb = RGBColor(0, 0, 0)
-    font.name = "Times New Roman"
-    font.size = Pt(14)
-    font.bold = False
-    font.italic = False
-
-    # Заглавные буквы, если нужно
-    if uppercase:
-        font.all_caps = True
-
-    paragraph_format: ParagraphFormat = style.paragraph_format
-    paragraph_format.space_before = Pt(0)
-    paragraph_format.space_after = Pt(0)
-    paragraph_format.line_spacing = 1.5
-
-    # Настройка выравнивания
-    if alignment != WD_ALIGN_PARAGRAPH.CENTER:
-        paragraph_format.first_line_indent = Cm(1.25)
-    paragraph_format.alignment = alignment
+class Style(Enum):
+    CODE = "STD_code"
+    H1 = "STD_h1"
+    H2 = "STD_h2"
+    H3 = "STD_h3"
+    H4 = "STD_h4"
+    IMAGE = "STD_image"
+    IMAGE_TEXT = "STD_image_text"
+    LIST_M = "STD_list_m"
+    LIST_N = "STD_list_n"
+    NORMAL = "STD_normal"
 
 
 def init_docx(docx_file):
-    # Создаем новый документ
-    doc = Document()
-
-    # Создаем пользовательские стили для заголовков
-    update_style(doc, "Normal")
-    update_style(doc, "Header 1", WD_ALIGN_PARAGRAPH.CENTER, uppercase=True)
-    update_style(doc, "Header 2", WD_ALIGN_PARAGRAPH.LEFT)
-    update_style(doc, "Header 3", WD_ALIGN_PARAGRAPH.LEFT)
-    update_style(doc, "Header 4", WD_ALIGN_PARAGRAPH.LEFT)
-
+    docx_template_path = Path(__file__).parent.joinpath("resources/style_template.docx")
+    doc = Document(docx_template_path.resolve().__str__())
+    doc._body.clear_content()
     return doc
 
 
@@ -65,37 +45,29 @@ def md_to_docx(md_file, docx_file):
         md_content = file.read()
     html_content = markdown2.markdown(md_content)
     doc = init_docx("styled_output.docx")
-    logging.debug("Document initialized with styles")
 
+    def add_paragraph(text: str, style: Style, tag_len: int = 2):
+        doc.add_paragraph(text[tag_len + 2 : -tag_len - 3], style.value)
+
+    ordered_list = False
     # Разбиваем HTML на блоки для обработки
-    in_list = False
     for line in tqdm(html_content.splitlines(), ncols=80):
         if line.startswith("<h1>"):
-            doc.add_paragraph(line[4:-5], style="Header 1")
-            logger.debug(f"Added Header 1: {line[4:-5]}")
+            add_paragraph(line, Style.H1)
         elif line.startswith("<h2>"):
-            doc.add_paragraph(line[4:-5], style="Header 2")
-            logger.debug(f"Added Header 2: {line[4:-5]}")
+            add_paragraph(line, Style.H2)
         elif line.startswith("<h3>"):
-            doc.add_paragraph(line[4:-5], style="Header 3")
-            logger.debug(f"Added Header 3: {line[4:-5]}")
+            add_paragraph(line, Style.H3)
         elif line.startswith("<h4>"):
-            doc.add_paragraph(line[4:-5], style="Header 4")
-            logger.debug(f"Added Header 4: {line[4:-5]}")
-        elif line.startswith("<ul>") or in_list:
-            # Если начинается маркированный список
-            in_list = True
-            while in_list:
-                line = line.strip()
-                if line.startswith("<li>") or line.startswith("<ul>"):
-                    doc.add_paragraph(line[4:-5], style="ListBullet")
-                if "</ul>" in line or "</li>" in line:
-                    in_list = False
-                else:
-                    break
+            add_paragraph(line, Style.H4)
+        elif line.startswith("<ul>"):
+            ordered_list = False
+        elif line.startswith("<ol>"):
+            ordered_list = True
+        elif line.startswith("<li>"):
+            add_paragraph(line, Style.LIST_N if ordered_list else Style.LIST_M)
         elif line.startswith("<p>"):
-            # Добавляем новый абзац
-            doc.add_paragraph(line[3:-4], style="Normal")
+            add_paragraph(line, Style.NORMAL, 1)
 
     # Сохраняем документ .docx
     doc.save(docx_file)
